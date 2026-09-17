@@ -1,50 +1,89 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
+import { UserProfile, normalizeProfile } from '../types';
 
 interface AuthContextType {
   session: Session | null;
   user: User | null;
+  profile: UserProfile | null;
   loading: boolean;
   signOut: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
   session: null,
   user: null,
+  profile: null,
   loading: true,
   signOut: async () => {},
+  refreshProfile: async () => {},
 });
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Helper to safely load or reload profile data from 'profiles' table
+  const fetchProfileForUser = useCallback(async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error) {
+        console.warn('Could not load profile from profiles table:', error.message);
+        return null;
+      }
+      return normalizeProfile(data as UserProfile | null);
+    } catch (err) {
+      console.warn('Error fetching profile:', err);
+      return null;
+    }
+  }, []);
+
+  const refreshProfile = useCallback(async () => {
+    if (!user?.id) return;
+    const p = await fetchProfileForUser(user.id);
+    if (p) {
+      setProfile(p);
+    }
+  }, [user?.id, fetchProfileForUser]);
 
   useEffect(() => {
     let mounted = true;
 
     async function initializeAuth() {
       try {
-        const { data: { session }, error } = await supabase.auth.getSession();
+        const { data: { session: currentSession }, error } = await supabase.auth.getSession();
         if (mounted) {
           if (error) {
             console.error('Error fetching session:', error);
           }
-          
-          // Prevent race condition: if getSession() resolves with null, 
-          // but a session was already established (e.g. by a fast login triggering onAuthStateChange),
-          // do NOT overwrite the valid session with null.
-          setSession((prev) => {
-            if (session === null && prev !== null) return prev;
-            return session;
-          });
-          
-          setUser((prev) => {
-            if (session === null && prev !== null) return prev;
-            return session?.user ?? null;
-          });
+
+          if (currentSession?.user) {
+            setSession(currentSession);
+            setUser(currentSession.user);
+
+            // Fetch profile asynchronously without blocking session state
+            fetchProfileForUser(currentSession.user.id).then((p) => {
+              if (mounted && p) {
+                setProfile(p);
+              }
+            });
+          } else {
+            // Keep existing session if already populated by fast sign-in event
+            setSession((prev) => prev);
+            setUser((prev) => prev);
+          }
         }
+      } catch (err) {
+        console.error('Session initialization error:', err);
       } finally {
         if (mounted) {
           setLoading(false);
@@ -54,26 +93,28 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
     initializeAuth();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (mounted) {
-        if (event === 'INITIAL_SESSION') {
-          // In some cases INITIAL_SESSION fires synchronously with null before storage is read.
-          // We rely on getSession() to handle the true initial load.
-          // But if it has a valid session, we can safely apply it.
-          if (session) {
-             setSession(session);
-             setUser(session.user);
-          }
-          return;
-        }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
+      if (!mounted) return;
 
-        if (event === 'SIGNED_OUT') {
-          setSession(null);
-          setUser(null);
-        } else if (session) {
-          setSession(session);
-          setUser(session.user);
+      if (event === 'SIGNED_OUT') {
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+        setLoading(false);
+        return;
+      }
+
+      if (currentSession?.user) {
+        setSession(currentSession);
+        setUser(currentSession.user);
+        setLoading(false);
+
+        const p = await fetchProfileForUser(currentSession.user.id);
+        if (mounted && p) {
+          setProfile(p);
         }
+      } else if (event === 'INITIAL_SESSION') {
+        // If initial session event has no session, let initializeAuth complete
       }
     });
 
@@ -81,14 +122,20 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, []);
+  }, [fetchProfileForUser]);
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      setSession(null);
+      setUser(null);
+      setProfile(null);
+    }
   };
 
   return (
-    <AuthContext.Provider value={{ session, user, loading, signOut }}>
+    <AuthContext.Provider value={{ session, user, profile, loading, signOut, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );

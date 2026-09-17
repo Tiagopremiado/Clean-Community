@@ -1,12 +1,13 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
 }
 
 body {
-  background-color: #FAFAFA;
-  color: #171717;
+  @apply bg-[#FAFAFA] text-[#171717] dark:bg-zinc-950 dark:text-zinc-100;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -16,4 +17,8 @@ body {
 .bg-dot-pattern {
   background-image: radial-gradient(circle at center, #D4D4D8 1px, transparent 1px);
   background-size: 24px 24px;
+}
+
+.dark .bg-dot-pattern {
+  background-image: radial-gradient(circle at center, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
 }
