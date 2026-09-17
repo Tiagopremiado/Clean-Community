@@ -4,7 +4,7 @@ import { ptBR } from 'date-fns/locale';
 export type Category = 'Todos' | 'Skills' | 'MCPs' | 'Workflows' | 'Prompts' | 'Ferramentas' | 'Referências';
 export type Role = 'member' | 'moderator' | 'admin';
 
-export const ADMIN_USERNAMES: string[] = ['thalesdev', 'kalebyalvesgamer'];
+export const ADMIN_USERNAMES: string[] = ['thalesdev', 'kalebyalvesgamer', 'thaleskaleby24', 'thaleskaleby'];
 
 // In-memory runtime store for role updates without localStorage
 const inMemoryRoleOverrides: Record<string, Role> = {};
@@ -32,8 +32,14 @@ export function isUserAdminOrDev(userOrProfile?: { role?: string; username?: str
   if (userOrProfile.id && inMemoryRoleOverrides[userOrProfile.id] === 'admin') return true;
   if (userOrProfile.username && isAdminUser(userOrProfile.username)) return true;
   if (userOrProfile.email) {
-    const emailPrefix = userOrProfile.email.split('@')[0];
-    if (isAdminUser(emailPrefix) || userOrProfile.email.toLowerCase().includes('kalebyalvesgamer')) return true;
+    const emailLower = userOrProfile.email.toLowerCase();
+    const emailPrefix = emailLower.split('@')[0];
+    if (
+      isAdminUser(emailPrefix) || 
+      emailLower.includes('kalebyalvesgamer') || 
+      emailLower.includes('thaleskaleby') ||
+      emailLower.includes('thalesdev')
+    ) return true;
   }
   return false;
 }

@@ -128,6 +128,21 @@ export function Profile() {
             
           targetProfileData = (myProfile as UserProfile) || authProfile;
           targetUserId = user.id;
+
+          if (!targetProfileData) {
+            const email = user.email || '';
+            const emailPrefix = email ? email.split('@')[0] : '';
+            const isKnownThales = email.toLowerCase().includes('thaleskaleby') || email.toLowerCase().includes('kalebyalvesgamer');
+            targetProfileData = {
+              id: user.id,
+              name: (user.user_metadata?.full_name as string) || (isKnownThales ? 'Thales — Atos Web 💜' : (emailPrefix || 'Membro')),
+              username: (user.user_metadata?.username as string) || (isKnownThales ? 'thalesdev' : (emailPrefix || 'usuario')),
+              avatar: (user.user_metadata?.avatar_url as string) || `https://api.dicebear.com/9.x/notionists/svg?seed=${user.id}`,
+              role: isUserAdminOrDev(user as any) ? 'admin' : 'member',
+              bio: isKnownThales ? '💜 — Insta: @atosweb_\n💎 — Owner: LPVCW Workflow \n🎩 — Moderador: CLEAN Community' : null,
+              created_at: user.created_at || new Date().toISOString()
+            };
+          }
         }
       }
 
@@ -141,11 +156,23 @@ export function Profile() {
 
       // Load user posts with exact likes and comments count
       if (targetUserId) {
-        const { data: postsData, error: postsError } = await supabase
+        const email = user?.email?.toLowerCase() || '';
+        const isThalesAlias = email.includes('thaleskaleby') || email.includes('kalebyalvesgamer');
+        const authorIds = (isOwnProfile && isThalesAlias && targetUserId !== '656880a5-c555-4707-8517-246a9635af83')
+          ? [targetUserId, '656880a5-c555-4707-8517-246a9635af83']
+          : [targetUserId];
+
+        let postsQuery = supabase
           .from('posts')
-          .select('*, profiles(*), comments(count), likes_count:likes(count)')
-          .eq('author_id', targetUserId)
-          .order('created_at', { ascending: false });
+          .select('*, profiles(*), comments(count), likes_count:likes(count)');
+
+        if (authorIds.length > 1) {
+          postsQuery = postsQuery.in('author_id', authorIds);
+        } else {
+          postsQuery = postsQuery.eq('author_id', targetUserId);
+        }
+
+        const { data: postsData, error: postsError } = await postsQuery.order('created_at', { ascending: false });
 
         if (postsError) throw postsError;
 

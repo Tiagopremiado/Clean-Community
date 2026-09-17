@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
-import { UserProfile, normalizeProfile } from '../types';
+import { UserProfile, normalizeProfile, Role, isUserAdminOrDev, isAdminUser } from '../types';
 
 interface AuthContextType {
   session: Session | null;
@@ -27,8 +27,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Helper to safely load or reload profile data from 'profiles' table
-  const fetchProfileForUser = useCallback(async (userId: string) => {
+  // Helper to safely load or reload profile data from 'profiles' table with auto-provisioning
+  const fetchProfileForUser = useCallback(async (userId: string, userObj?: User | null) => {
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -36,11 +36,57 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         .eq('id', userId)
         .maybeSingle();
 
+      if (data) {
+        return normalizeProfile(data as UserProfile);
+      }
+
       if (error) {
         console.warn('Could not load profile from profiles table:', error.message);
-        return null;
       }
-      return normalizeProfile(data as UserProfile | null);
+
+      // If no profile found in Supabase (e.g. user registered on PC and trigger didn't run)
+      // Automatically attempt to provision their profile row
+      const email = userObj?.email || '';
+      const emailPrefix = email ? email.split('@')[0] : '';
+      const isKnownThales = email.toLowerCase().includes('thaleskaleby') || email.toLowerCase().includes('kalebyalvesgamer');
+      
+      const fallbackUsername = (userObj?.user_metadata?.username as string) || 
+        (isKnownThales ? 'thalesdev' : (emailPrefix || `user_${userId.slice(0, 5)}`));
+      const fallbackName = (userObj?.user_metadata?.full_name as string) || 
+        (isKnownThales ? 'Thales — Atos Web 💜' : (emailPrefix || 'Membro'));
+      const fallbackAvatar = (userObj?.user_metadata?.avatar_url as string) || 
+        `https://api.dicebear.com/9.x/notionists/svg?seed=${userId}`;
+      const isDevOrAdmin = isUserAdminOrDev(userObj as any) || isAdminUser(fallbackUsername);
+
+      const newProfilePayload = {
+        id: userId,
+        name: fallbackName,
+        username: fallbackUsername,
+        avatar: fallbackAvatar,
+        role: (isDevOrAdmin ? 'admin' : 'member') as Role
+      };
+
+      // Try inserting into Supabase so future queries and relations succeed
+      try {
+        const { data: createdData } = await supabase
+          .from('profiles')
+          .insert(newProfilePayload)
+          .select()
+          .maybeSingle();
+
+        if (createdData) {
+          return normalizeProfile(createdData as UserProfile);
+        }
+      } catch (insertErr) {
+        console.warn('Could not auto-insert profile into Supabase:', insertErr);
+      }
+
+      // Return synthetic normalized profile so the user is never left with null profile or broken UI
+      return normalizeProfile({
+        ...newProfilePayload,
+        bio: isKnownThales ? '💜 — Insta: @atosweb_\n💎 — Owner: LPVCW Workflow \n🎩 — Moderador: CLEAN Community' : null,
+        created_at: userObj?.created_at || new Date().toISOString()
+      });
     } catch (err) {
       console.warn('Error fetching profile:', err);
       return null;
@@ -49,11 +95,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const refreshProfile = useCallback(async () => {
     if (!user?.id) return;
-    const p = await fetchProfileForUser(user.id);
+    const p = await fetchProfileForUser(user.id, user);
     if (p) {
       setProfile(p);
     }
-  }, [user?.id, fetchProfileForUser]);
+  }, [user, fetchProfileForUser]);
 
   useEffect(() => {
     let mounted = true;
@@ -76,12 +122,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             setSession(currentSession);
             setUser(currentSession.user);
 
-            // Fetch profile asynchronously without blocking session state
-            fetchProfileForUser(currentSession.user.id).then((p) => {
-              if (mounted && p) {
-                setProfile(p);
-              }
-            });
+            // Fetch profile immediately
+            const p = await fetchProfileForUser(currentSession.user.id, currentSession.user);
+            if (mounted && p) {
+              setProfile(p);
+            }
           } else {
             // Keep existing session if already populated by fast sign-in event
             setSession((prev) => prev);
@@ -113,12 +158,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       if (currentSession?.user) {
         setSession(currentSession);
         setUser(currentSession.user);
-        setLoading(false);
 
-        const p = await fetchProfileForUser(currentSession.user.id);
+        const p = await fetchProfileForUser(currentSession.user.id, currentSession.user);
         if (mounted && p) {
           setProfile(p);
         }
+        setLoading(false);
       } else if (event === 'INITIAL_SESSION') {
         // If initial session event has no session, let initializeAuth complete
       }

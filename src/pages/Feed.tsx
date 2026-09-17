@@ -68,7 +68,13 @@ export function Feed() {
         }
       }
 
-      const { data: postsData, error: postsError } = await query;
+      // Safety timeout race to prevent infinite spinning if PC network is slow or interrupted
+      const queryPromise = query;
+      const timeoutPromise = new Promise<{ data: null; error: any }>((_, reject) =>
+        setTimeout(() => reject(new Error('Tempo limite excedido ao carregar publicações. Verifique sua conexão com a internet.')), 8000)
+      );
+
+      const { data: postsData, error: postsError } = (await Promise.race([queryPromise, timeoutPromise])) as any;
       if (postsError) throw postsError;
       
       const formattedPosts = ((postsData as any[]) || []).map(p => {
