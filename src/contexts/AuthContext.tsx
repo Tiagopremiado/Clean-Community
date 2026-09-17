@@ -106,10 +106,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
     async function initializeAuth() {
       try {
-        // Race getSession with a 3.5s timeout to prevent infinite hanging if Supabase is blocked or slow on PC
+        // Race getSession with a 7s timeout to prevent infinite hanging if Supabase is blocked or slow on PC
         const sessionPromise = supabase.auth.getSession();
         const timeoutPromise = new Promise<{ data: { session: null }; error: any }>((resolve) => {
-          setTimeout(() => resolve({ data: { session: null }, error: new Error('Auth timeout') }), 3500);
+          setTimeout(() => resolve({ data: { session: null }, error: new Error('Auth timeout') }), 7000);
         });
 
         const { data: { session: currentSession }, error } = await Promise.race([sessionPromise, timeoutPromise]);

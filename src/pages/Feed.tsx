@@ -18,9 +18,25 @@ export function Feed() {
   const categoryFilter = rawCategory || (settings.defaultCategory !== 'todos' ? settings.defaultCategory : null);
 
   const [feedSort, setFeedSort] = useState<FeedSortOption>('recent');
-  const [posts, setPosts] = useState<Post[]>([]);
+  const [posts, setPosts] = useState<Post[]>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const cached = localStorage.getItem('clean_community_feed_cache');
+        if (cached) return JSON.parse(cached);
+      }
+    } catch {
+      // Ignore parse error
+    }
+    return [];
+  });
   const [likedPostIds, setLikedPostIds] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => {
+    try {
+      return !localStorage.getItem('clean_community_feed_cache');
+    } catch {
+      return true;
+    }
+  });
   const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const { user } = useAuth();
@@ -35,11 +51,15 @@ export function Feed() {
     setSearchParams(next);
   };
   
-  const loadFeed = useCallback(async () => {
-    setLoading(true);
+  const loadFeed = useCallback(async (isRetry = false) => {
+    // If we have cached posts, do a silent background refresh without wiping existing posts
+    if (!posts.length || isRetry) {
+      setLoading(true);
+    }
     setError('');
+
     try {
-      // Consulta direta e exclusiva ao banco de dados Supabase
+      // Consulta direta ao banco de dados Supabase
       let query = supabase
         .from('posts')
         .select('*, profiles(*), comments(count), likes_count:likes(count)');
@@ -68,10 +88,10 @@ export function Feed() {
         }
       }
 
-      // Safety timeout race to prevent infinite spinning if PC network is slow or interrupted
+      // Safe query without aggressive 8s cutoff (with generous 20s network race guard)
       const queryPromise = query;
       const timeoutPromise = new Promise<{ data: null; error: any }>((_, reject) =>
-        setTimeout(() => reject(new Error('Tempo limite excedido ao carregar publicações. Verifique sua conexão com a internet.')), 8000)
+        setTimeout(() => reject(new Error('A conexão com o Supabase demorou mais que o esperado. Clique em Tentar Novamente.')), 20000)
       );
 
       const { data: postsData, error: postsError } = (await Promise.race([queryPromise, timeoutPromise])) as any;
@@ -88,6 +108,15 @@ export function Feed() {
       });
 
       setPosts(formattedPosts as Post[]);
+
+      // Cache posts locally for instant 0ms load on next visit or network blip
+      try {
+        if (typeof window !== 'undefined' && formattedPosts.length > 0 && (!categoryFilter || categoryFilter === 'todos')) {
+          localStorage.setItem('clean_community_feed_cache', JSON.stringify(formattedPosts));
+        }
+      } catch {
+        // Storage full/disabled
+      }
 
       if (user && postsData && postsData.length > 0) {
         try {
@@ -107,14 +136,26 @@ export function Feed() {
       }
     } catch (err: any) {
       console.error('Erro na consulta Supabase:', err);
-      setError(err?.message || 'Não foi possível carregar os posts do Supabase.');
+      // If we have cached posts, keep showing them and don't block the screen
+      if (!posts.length) {
+        setError(err?.message || 'Não foi possível carregar os posts do Supabase.');
+      }
     } finally {
       setLoading(false);
     }
-  }, [categoryFilter, user, feedSort]);
+  }, [categoryFilter, user, feedSort, posts.length]);
 
   useEffect(() => {
     loadFeed();
+
+    const handleOnline = () => {
+      loadFeed(true);
+    };
+
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+    };
   }, [loadFeed]);
 
   const handleToggleLike = async (postId: string) => {
@@ -243,17 +284,29 @@ export function Feed() {
       </header>
 
       <div className="flex flex-col">
-        {loading ? (
+        {error && posts.length > 0 && (
+          <div className="mb-4 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 flex items-center justify-between gap-3 text-xs text-amber-800 dark:text-amber-300">
+            <span>Exibindo conteúdo salvo em cache. Verifique sua conexão.</span>
+            <button
+              onClick={() => loadFeed(true)}
+              className="px-2.5 py-1 rounded-lg bg-amber-200/60 dark:bg-amber-900/60 hover:bg-amber-200 dark:hover:bg-amber-900 font-semibold transition-colors cursor-pointer shrink-0"
+            >
+              Reconectar
+            </button>
+          </div>
+        )}
+
+        {loading && posts.length === 0 ? (
           <div className="py-12 flex justify-center">
             <Loader2 className="w-8 h-8 animate-spin text-gray-400 dark:text-gray-500" />
           </div>
-        ) : error ? (
+        ) : error && posts.length === 0 ? (
           <div className="py-12 px-4 text-center border border-zinc-200 dark:border-zinc-800 rounded-2xl bg-zinc-50 dark:bg-zinc-900/40">
             <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-3" />
             <p className="text-zinc-900 dark:text-zinc-100 text-sm font-semibold mb-1">Erro ao carregar dados do Supabase</p>
             <p className="text-zinc-500 dark:text-zinc-400 text-xs mb-4 max-w-md mx-auto">{error}</p>
             <button
-              onClick={() => loadFeed()}
+              onClick={() => loadFeed(true)}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-black dark:bg-white text-white dark:text-black text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
             >
               <RefreshCw className="w-3.5 h-3.5" />
