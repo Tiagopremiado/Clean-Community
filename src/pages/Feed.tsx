@@ -72,7 +72,14 @@ export function Feed() {
         }
       }
 
-      const { data: postsData, error: postsError } = await query;
+      const timeoutPromise = new Promise<{ data: null; error: Error }>((_, reject) =>
+        setTimeout(() => reject(new Error('Tempo limite de conexão com o banco esgotado.')), 4500)
+      );
+
+      const { data: postsData, error: postsError } = await Promise.race([
+        query,
+        timeoutPromise
+      ]) as any;
       if (postsError) throw postsError;
       
       const formattedPosts = ((postsData as any[]) || []).map(p => {

@@ -194,9 +194,13 @@ export function togglePinPost(postId: string, forceReplace: boolean = false): {
   }
 }
 
-export function normalizeProfile(profile: UserProfile | null | undefined): UserProfile | null {
+export function normalizeProfile(profile: any): UserProfile | null {
   if (!profile) return null;
-  const cleanUsername = profile.username ? profile.username.toLowerCase().trim().replace(/^@/, '') : '';
+  if (Array.isArray(profile)) {
+    if (profile.length === 0) return null;
+    return normalizeProfile(profile[0]);
+  }
+  const cleanUsername = profile.username ? String(profile.username).toLowerCase().trim().replace(/^@/, '') : '';
   const overrides = getStoredRoleOverrides();
   
   const assignedRole: Role = overrides[profile.id] || (cleanUsername ? overrides[cleanUsername] : undefined) || profile.role;

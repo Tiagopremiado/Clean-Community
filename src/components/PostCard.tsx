@@ -22,8 +22,16 @@ export function PostCard({ post, isLiked, onToggleLike }: PostCardProps) {
   const navigate = useNavigate();
   const { settings } = useSettings();
   const rawAuthor = post.profiles;
-  if (!rawAuthor) return null;
-  const author = normalizeProfile(rawAuthor) || rawAuthor;
+  const normalizedAuthor = normalizeProfile(rawAuthor);
+  const author = normalizedAuthor || {
+    id: post.author_id || 'community-member',
+    name: 'Membro da Comunidade',
+    username: 'membro',
+    role: 'member' as const,
+    avatar: `https://api.dicebear.com/9.x/notionists/svg?seed=${post.author_id || post.id}`,
+    bio: null,
+    created_at: post.created_at || new Date().toISOString()
+  };
 
   const isCompact = settings.feedDensity === 'compact';
   const profileUrl = `/profile/${author.username || author.id}`;

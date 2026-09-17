@@ -48,12 +48,21 @@ export function PostDetails() {
   const loadPost = useCallback(async () => {
     if (!id) return;
     try {
-      // 1. OBRIGATÓRIO: Leitura prioritária do banco de dados Supabase
-      const { data: postData, error: postError } = await supabase
+      // 1. OBRIGATÓRIO: Leitura prioritária do banco de dados Supabase com proteção de timeout
+      const queryPromise = supabase
         .from('posts')
         .select('*, profiles(*), comments(count), likes_count:likes(count)')
         .eq('id', id)
         .single();
+
+      const timeoutPromise = new Promise<{ data: null; error: Error }>((_, reject) =>
+        setTimeout(() => reject(new Error('Tempo limite de conexão esgotado.')), 4500)
+      );
+
+      const { data: postData, error: postError } = await Promise.race([
+        queryPromise,
+        timeoutPromise
+      ]) as any;
         
       if (postError) throw postError;
 
