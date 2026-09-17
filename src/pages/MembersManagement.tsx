@@ -41,8 +41,6 @@ function cn(...inputs: (string | undefined | null | false)[]) {
   return twMerge(clsx(inputs));
 }
 
-const CACHED_MEMBERS_KEY = 'clean_community_cached_members_list';
-
 export function MembersManagement() {
   const navigate = useNavigate();
   const { user, profile } = useAuth();
@@ -71,7 +69,7 @@ export function MembersManagement() {
     setLoading(true);
     setError('');
     try {
-      // 1. Prioridade: Consulta ao banco de dados Supabase
+      // Consulta direta e exclusiva ao banco de dados Supabase
       const { data, error: fetchError } = await supabase
         .from('profiles')
         .select('*')
@@ -82,27 +80,10 @@ export function MembersManagement() {
       if (data) {
         const normalized = (data as UserProfile[]).map(p => normalizeProfile(p) || p);
         setMembers(normalized);
-        try {
-          localStorage.setItem(CACHED_MEMBERS_KEY, JSON.stringify(normalized));
-        } catch (e) {
-          console.warn('Falha ao salvar cache de membros:', e);
-        }
       }
     } catch (err: any) {
-      console.warn('Erro ao carregar membros do Supabase, tentando cache local:', err);
-      try {
-        const cached = localStorage.getItem(CACHED_MEMBERS_KEY);
-        if (cached) {
-          const parsed = JSON.parse(cached) as UserProfile[];
-          const normalized = parsed.map(p => normalizeProfile(p) || p);
-          setMembers(normalized);
-          showFeedback('Carregado snapshot local (offline)', 'success');
-        } else {
-          setError('Não foi possível carregar a lista de membros do banco de dados.');
-        }
-      } catch {
-        setError('Erro ao carregar membros.');
-      }
+      console.error('Erro ao carregar membros do Supabase:', err);
+      setError('Não foi possível carregar a lista de membros do banco de dados Supabase.');
     } finally {
       setLoading(false);
     }

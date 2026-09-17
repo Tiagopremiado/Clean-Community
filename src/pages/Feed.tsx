@@ -1,13 +1,11 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { PostCard } from '../components/PostCard';
-import { Search, Loader2, Sparkles, ArrowRight, RefreshCw } from 'lucide-react';
+import { Search, Loader2, Sparkles, ArrowRight, RefreshCw, AlertCircle } from 'lucide-react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Post, normalizeProfile, getPinnedPostId } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { useSettings } from '../contexts/SettingsContext';
-import { saveOfflinePosts, getOfflinePosts } from '../lib/offlineFallback';
-import { NetworkStatusBar } from '../components/NetworkStatusBar';
 import { FeedFilterBar, FeedSortOption } from '../components/FeedFilterBar';
 
 export function Feed() {
@@ -25,8 +23,6 @@ export function Feed() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [isOfflineFallback, setIsOfflineFallback] = useState(false);
-  const [lastSyncTimestamp, setLastSyncTimestamp] = useState<number | null>(null);
   const { user } = useAuth();
 
   const handleSelectCategory = (category: string) => {
@@ -43,12 +39,12 @@ export function Feed() {
     setLoading(true);
     setError('');
     try {
-      // 1. OBRIGATÓRIO: Consulta prioritária diretamente ao banco de dados Supabase
+      // Consulta direta e exclusiva ao banco de dados Supabase
       let query = supabase
         .from('posts')
         .select('*, profiles(*), comments(count), likes_count:likes(count)');
 
-      // Ordenação dinâmica: mais recentes ou mais populares (em alta)
+      // Ordenação dinâmica: mais recentes ou mais populares
       if (feedSort === 'popular') {
         query = query.order('likes', { ascending: false });
       } else {
@@ -72,14 +68,7 @@ export function Feed() {
         }
       }
 
-      const timeoutPromise = new Promise<{ data: null; error: Error }>((_, reject) =>
-        setTimeout(() => reject(new Error('Tempo limite de conexão com o banco esgotado.')), 4500)
-      );
-
-      const { data: postsData, error: postsError } = await Promise.race([
-        query,
-        timeoutPromise
-      ]) as any;
+      const { data: postsData, error: postsError } = await query;
       if (postsError) throw postsError;
       
       const formattedPosts = ((postsData as any[]) || []).map(p => {
@@ -93,45 +82,26 @@ export function Feed() {
       });
 
       setPosts(formattedPosts as Post[]);
-      setIsOfflineFallback(false);
-      setLastSyncTimestamp(Date.now());
-
-      // 2. Salva no localStorage estritamente como snapshot/fallback para modo offline
-      saveOfflinePosts(formattedPosts as Post[]);
 
       if (user && postsData && postsData.length > 0) {
-        const postIds = postsData.map(p => p.id);
-        const { data: likesData } = await supabase
-          .from('likes')
-          .select('post_id')
-          .eq('user_id', user.id)
-          .in('post_id', postIds);
-          
-        if (likesData) {
-          setLikedPostIds(new Set(likesData.map(l => l.post_id)));
+        try {
+          const postIds = postsData.map(p => p.id);
+          const { data: likesData } = await supabase
+            .from('likes')
+            .select('post_id')
+            .eq('user_id', user.id)
+            .in('post_id', postIds);
+            
+          if (likesData) {
+            setLikedPostIds(new Set(likesData.map(l => l.post_id)));
+          }
+        } catch (likesErr) {
+          console.warn('Erro ao carregar curtidas do usuário no Supabase:', likesErr);
         }
       }
     } catch (err: any) {
-      console.warn('Falha na conexão com banco de dados Supabase. Ativando fallback offline:', err);
-      
-      // 3. Fallback: Se o banco estiver temporariamente indisponível ou usuário offline, carrega do localStorage
-      const cached = getOfflinePosts();
-      if (cached && cached.posts && cached.posts.length > 0) {
-        let sorted = [...cached.posts];
-        if (feedSort === 'popular') {
-          sorted.sort((a, b) => (b.likes || 0) - (a.likes || 0));
-        } else {
-          sorted.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-        }
-        if (categoryFilter && categoryFilter.toLowerCase() !== 'todos') {
-          sorted = sorted.filter(p => p.category.toLowerCase() === categoryFilter.toLowerCase());
-        }
-        setPosts(sorted);
-        setIsOfflineFallback(true);
-        setLastSyncTimestamp(cached.timestamp);
-      } else {
-        setError('Não foi possível conectar ao banco de dados Supabase e não há cache offline disponível.');
-      }
+      console.error('Erro na consulta Supabase:', err);
+      setError(err?.message || 'Não foi possível carregar os posts do Supabase.');
     } finally {
       setLoading(false);
     }
@@ -196,9 +166,9 @@ export function Feed() {
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase();
       return (
-        post.title.toLowerCase().includes(q) ||
-        post.description.toLowerCase().includes(q) ||
-        post.category.toLowerCase().includes(q)
+        (post.title || '').toLowerCase().includes(q) ||
+        (post.description || '').toLowerCase().includes(q) ||
+        (post.category || '').toLowerCase().includes(q)
       );
     })
     .sort((a, b) => {
@@ -210,15 +180,6 @@ export function Feed() {
 
   return (
     <div className="max-w-3xl mx-auto w-full pt-8 pb-24 px-4 sm:px-8">
-      {/* Indicador de Status de Conexão com o Banco Supabase / Fallback Offline */}
-      <div className="mb-6 rounded-2xl overflow-hidden shadow-xs border border-amber-500/20">
-        <NetworkStatusBar 
-          isOfflineFallback={isOfflineFallback} 
-          onRefresh={loadFeed} 
-          lastSyncTime={lastSyncTimestamp} 
-        />
-      </div>
-
       <header className="mb-10">
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2 text-gray-900 dark:text-zinc-50">
           {categoryFilter && categoryFilter !== 'todos' ? `Feed: ${categoryFilter.charAt(0).toUpperCase() + categoryFilter.slice(1)}` : 'Feed'}
@@ -281,8 +242,17 @@ export function Feed() {
             <Loader2 className="w-8 h-8 animate-spin text-gray-400 dark:text-gray-500" />
           </div>
         ) : error ? (
-          <div className="py-12 text-center">
-            <p className="text-red-500 text-sm font-medium">{error}</p>
+          <div className="py-12 px-4 text-center border border-zinc-200 dark:border-zinc-800 rounded-2xl bg-zinc-50 dark:bg-zinc-900/40">
+            <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-3" />
+            <p className="text-zinc-900 dark:text-zinc-100 text-sm font-semibold mb-1">Erro ao carregar dados do Supabase</p>
+            <p className="text-zinc-500 dark:text-zinc-400 text-xs mb-4 max-w-md mx-auto">{error}</p>
+            <button
+              onClick={() => loadFeed()}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-black dark:bg-white text-white dark:text-black text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-xs"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Tentar Novamente</span>
+            </button>
           </div>
         ) : filteredPosts.length > 0 ? (
           filteredPosts.map((post) => (

@@ -127,6 +127,19 @@ export function ProfileSettings({ user, profile, onProfileUpdated }: ProfileSett
         throw error;
       }
 
+      // Keep Supabase Auth user_metadata in sync with new profile details
+      try {
+        await supabase.auth.updateUser({
+          data: {
+            full_name: cleanName,
+            username: cleanUsername,
+            avatar_url: avatarUrl,
+          }
+        });
+      } catch (authErr) {
+        console.warn('Não foi possível sincronizar metadados do auth:', authErr);
+      }
+
       await refreshProfile();
 
       if (onProfileUpdated && data) {
@@ -370,6 +383,9 @@ export function ProfileSettings({ user, profile, onProfileUpdated }: ProfileSett
             />
           </div>
           <span className="text-xs text-gray-400 dark:text-gray-500">Apenas letras minúsculas, números e sublinhados (_).</span>
+          <p className="text-[11px] text-gray-500 dark:text-zinc-400 bg-gray-50 dark:bg-zinc-800/40 p-2.5 rounded-lg border border-gray-100 dark:border-zinc-800">
+            💡 <strong>Nota:</strong> Mudar seu nome de usuário altera apenas sua identificação visual. O login no app continuará sendo feito com seu e-mail cadastrado <strong>({user.email})</strong>.
+          </p>
         </div>
 
         {/* Biografia */}

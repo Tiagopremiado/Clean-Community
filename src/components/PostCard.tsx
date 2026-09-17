@@ -156,12 +156,14 @@ export function PostCard({ post, isLiked, onToggleLike }: PostCardProps) {
           )}>
             {post.title}
           </h3>
-          <p className={cn(
-            "text-gray-600 dark:text-zinc-400 leading-relaxed",
-            isCompact ? "text-xs sm:text-sm line-clamp-2" : "text-sm sm:text-base line-clamp-3"
-          )}>
-            {post.description}
-          </p>
+          {post.description && (
+            <p className={cn(
+              "text-gray-600 dark:text-zinc-400 leading-relaxed",
+              isCompact ? "text-xs sm:text-sm line-clamp-2" : "text-sm sm:text-base line-clamp-3"
+            )}>
+              {post.description}
+            </p>
+          )}
         </div>
       </Link>
 

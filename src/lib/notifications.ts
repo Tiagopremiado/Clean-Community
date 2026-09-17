@@ -8,50 +8,34 @@ export interface AppNotification {
   link?: string;
 }
 
-const STORAGE_KEY = 'clean_community_notifications_v1';
+// In-memory notifications store for the active runtime session
+let inMemoryNotifications: AppNotification[] = [
+  {
+    id: 'welcome-1',
+    title: 'Bem-vindo ao CLEAN Community!',
+    body: 'Instale o app via PWA no seu celular ou PC e ative as notificações.',
+    timestamp: new Date().toISOString(),
+    read: false,
+    type: 'system',
+    link: '/download',
+  },
+];
 
 export function getStoredNotifications(): AppNotification[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      // Default initial welcome notification
-      const initial: AppNotification[] = [
-        {
-          id: 'welcome-1',
-          title: 'Bem-vindo ao CLEAN Community!',
-          body: 'Instale o app via PWA no seu celular ou PC e ative as notificações.',
-          timestamp: new Date().toISOString(),
-          read: false,
-          type: 'system',
-          link: '/download',
-        },
-      ];
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
-      return initial;
-    }
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
+  return [...inMemoryNotifications];
 }
 
 export function saveNotifications(notifications: AppNotification[]) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(notifications));
-  } catch {
-    // Ignore
-  }
+  inMemoryNotifications = [...notifications];
 }
 
 export function markAllNotificationsAsRead(): AppNotification[] {
-  const current = getStoredNotifications();
-  const updated = current.map((n) => ({ ...n, read: true }));
-  saveNotifications(updated);
-  return updated;
+  inMemoryNotifications = inMemoryNotifications.map((n) => ({ ...n, read: true }));
+  return [...inMemoryNotifications];
 }
 
 export function clearAllNotifications(): AppNotification[] {
-  saveNotifications([]);
+  inMemoryNotifications = [];
   return [];
 }
 

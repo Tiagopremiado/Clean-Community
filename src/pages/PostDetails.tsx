@@ -12,11 +12,9 @@ import {
   getOfficialShareUrl,
   getPinnedPostId
 } from '../types';
-import { ArrowLeft, Heart, MessageSquare, ExternalLink, Share, MoreHorizontal, Loader2, Trash2, Pin } from 'lucide-react';
+import { ArrowLeft, Heart, MessageSquare, ExternalLink, Share, MoreHorizontal, Loader2, Trash2, Pin, AlertCircle, RefreshCw } from 'lucide-react';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { RichLinkBookmark } from '../components/RichLinkBookmark';
-import { NetworkStatusBar } from '../components/NetworkStatusBar';
-import { saveOfflinePostDetails, getOfflinePostDetails } from '../lib/offlineFallback';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { supabase } from '../lib/supabase';
@@ -40,29 +38,21 @@ export function PostDetails() {
   const [copied, setCopied] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isOfflineFallback, setIsOfflineFallback] = useState(false);
-  const [lastSyncTimestamp, setLastSyncTimestamp] = useState<number | null>(null);
   const [isPinned, setIsPinned] = useState(id ? isPinnedPost(id) : false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const loadPost = useCallback(async () => {
     if (!id) return;
+    setLoading(true);
+    setError(null);
     try {
-      // 1. OBRIGATÓRIO: Leitura prioritária do banco de dados Supabase com proteção de timeout
-      const queryPromise = supabase
+      // Leitura direta e exclusiva do banco de dados Supabase
+      const { data: postData, error: postError } = await supabase
         .from('posts')
         .select('*, profiles(*), comments(count), likes_count:likes(count)')
         .eq('id', id)
         .single();
-
-      const timeoutPromise = new Promise<{ data: null; error: Error }>((_, reject) =>
-        setTimeout(() => reject(new Error('Tempo limite de conexão esgotado.')), 4500)
-      );
-
-      const { data: postData, error: postError } = await Promise.race([
-        queryPromise,
-        timeoutPromise
-      ]) as any;
         
       if (postError) throw postError;
 
@@ -90,11 +80,6 @@ export function PostDetails() {
       };
 
       setPost(normalizedPost);
-      setIsOfflineFallback(false);
-      setLastSyncTimestamp(Date.now());
-
-      // 2. Salva no localStorage como fallback offline de segurança
-      saveOfflinePostDetails(id, normalizedPost, loadedComments);
 
       if (user) {
         const { data: likeData } = await supabase
@@ -106,16 +91,9 @@ export function PostDetails() {
         
         setIsLiked(!!likeData);
       }
-    } catch (err) {
-      console.warn('Falha na consulta ao banco Supabase. Verificando fallback do localStorage:', err);
-      // 3. Fallback offline: se o banco falhar ou rede offline, lê do cache local
-      const cached = getOfflinePostDetails(id);
-      if (cached && cached.post) {
-        setPost(cached.post);
-        setComments(cached.comments || []);
-        setIsOfflineFallback(true);
-        setLastSyncTimestamp(cached.timestamp);
-      }
+    } catch (err: any) {
+      console.error('Erro na consulta Supabase do post:', err);
+      setError(err?.message || 'Post não encontrado ou falha de conexão com o Supabase.');
     } finally {
       setLoading(false);
     }
@@ -284,11 +262,25 @@ export function PostDetails() {
   if (!post) {
     return (
       <div className="max-w-3xl mx-auto w-full pt-20 pb-24 px-4 sm:px-8 text-center">
+        <div className="w-12 h-12 rounded-2xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center mx-auto mb-4 text-zinc-500">
+          <AlertCircle className="w-6 h-6 text-red-500" />
+        </div>
         <h2 className="text-xl font-bold mb-2">Publicação não encontrada</h2>
-        <p className="text-gray-500 dark:text-gray-400 mb-6">Esta publicação pode ter sido removida ou o link está incorreto.</p>
-        <button onClick={() => navigate('/')} className="px-4 py-2 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-medium hover:bg-gray-800 dark:hover:bg-gray-200 transition-colors">
-          Voltar para Home
-        </button>
+        <p className="text-gray-500 dark:text-gray-400 mb-6 text-sm max-w-md mx-auto">
+          {error || 'Esta publicação pode ter sido removida ou não pôde ser carregada do Supabase.'}
+        </p>
+        <div className="flex items-center justify-center gap-3">
+          <button 
+            onClick={() => loadPost()}
+            className="px-4 py-2 bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 rounded-xl text-sm font-medium hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors inline-flex items-center gap-2 cursor-pointer"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>Tentar Novamente</span>
+          </button>
+          <button onClick={() => navigate('/')} className="px-4 py-2 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-medium hover:bg-gray-800 dark:hover:bg-gray-200 transition-colors cursor-pointer">
+            Voltar para Home
+          </button>
+        </div>
       </div>
     );
   }
@@ -314,15 +306,6 @@ export function PostDetails() {
           </button>
         </div>
       )}
-
-      {/* Status da conexão com Supabase e Fallback offline */}
-      <div className="mb-6 rounded-2xl overflow-hidden shadow-xs border border-amber-500/20">
-        <NetworkStatusBar 
-          isOfflineFallback={isOfflineFallback} 
-          onRefresh={loadPost} 
-          lastSyncTime={lastSyncTimestamp} 
-        />
-      </div>
 
       <button 
         onClick={() => navigate(-1)}

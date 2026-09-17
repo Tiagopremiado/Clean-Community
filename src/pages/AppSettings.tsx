@@ -17,9 +17,12 @@ import {
   Smartphone,
   CheckCircle2,
   Volume2,
-  Share
+  Share,
+  LogOut,
+  Loader2
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { usePWAInstall } from '../hooks/usePWAInstall';
@@ -44,8 +47,11 @@ const CATEGORIES = [
 ];
 
 export function AppSettings() {
+  const navigate = useNavigate();
+  const { user, profile, signOut } = useAuth();
   const { settings, updateSetting, resetSettings } = useSettings();
   const [resetFeedback, setResetFeedback] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const { isInstallable, isInstalled, install } = usePWAInstall();
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>(getNotificationPermission());
   const [testingNotif, setTestingNotif] = useState(false);
@@ -54,6 +60,18 @@ export function AppSettings() {
   useEffect(() => {
     setNotifPermission(getNotificationPermission());
   }, []);
+
+  const handleSignOut = async () => {
+    try {
+      setIsLoggingOut(true);
+      await signOut();
+      navigate('/', { replace: true });
+    } catch (err) {
+      console.error('Erro ao sair da conta:', err);
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
 
   const handleReset = () => {
     if (window.confirm('Deseja redefinir todas as preferências do app para os valores padrão?')) {
@@ -435,6 +453,46 @@ export function AppSettings() {
                 <ExternalLink className="w-3.5 h-3.5" />
               </a>
             </div>
+          </div>
+        </section>
+
+        {/* Seção: Conta & Sessão */}
+        <section className="p-5 sm:p-6 rounded-2xl border border-gray-200/80 dark:border-zinc-800 bg-white dark:bg-zinc-900 transition-colors">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                <UserCircle className="w-4 h-4 text-zinc-500" />
+                Conta & Conexão
+              </h2>
+              {user ? (
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Conectado como <strong className="text-gray-900 dark:text-zinc-200 font-semibold">{user.email}</strong> {profile?.username ? `(@${profile.username})` : ''}
+                </p>
+              ) : (
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Você está navegando como visitante (sem conta conectada).
+                </p>
+              )}
+            </div>
+
+            {user ? (
+              <button
+                type="button"
+                onClick={handleSignOut}
+                disabled={isLoggingOut}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-red-50 hover:bg-red-100 dark:bg-red-950/30 dark:hover:bg-red-950/60 text-red-600 dark:text-red-400 rounded-xl text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {isLoggingOut ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LogOut className="w-3.5 h-3.5" />}
+                <span>{isLoggingOut ? 'Desconectando...' : 'Desconectar da conta'}</span>
+              </button>
+            ) : (
+              <Link
+                to="/login"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-black dark:bg-white text-white dark:text-black rounded-xl text-xs font-bold hover:opacity-90 transition-opacity"
+              >
+                <span>Fazer Login</span>
+              </Link>
+            )}
           </div>
         </section>
 

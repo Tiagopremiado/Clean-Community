@@ -1,9 +1,7 @@
 import { LinkPreviewData, LinkProviderType } from '../types/linkPreview';
 
-// In-memory cache
+// In-memory cache for active session
 const previewCache = new Map<string, LinkPreviewData>();
-const CACHE_PREFIX = 'clean_link_preview_v2:';
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function getHostname(urlStr: string): string {
   try {
@@ -16,33 +14,6 @@ function getHostname(urlStr: string): string {
 
 function getFaviconUrl(domain: string): string {
   return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
-}
-
-// Read from localStorage cache
-function getStoredPreview(url: string): LinkPreviewData | null {
-  try {
-    const raw = localStorage.getItem(CACHE_PREFIX + url);
-    if (!raw) return null;
-    const { data, timestamp } = JSON.parse(raw);
-    if (Date.now() - timestamp < CACHE_TTL_MS) {
-      return data;
-    }
-  } catch {
-    // Ignore storage parse errors
-  }
-  return null;
-}
-
-// Save to localStorage cache
-function setStoredPreview(url: string, data: LinkPreviewData): void {
-  try {
-    localStorage.setItem(CACHE_PREFIX + url, JSON.stringify({
-      data,
-      timestamp: Date.now()
-    }));
-  } catch {
-    // Ignore storage full errors
-  }
 }
 
 /**
@@ -234,21 +205,14 @@ export async function fetchLinkPreview(url: string): Promise<LinkPreviewData> {
   // Normalize url
   const normalizedUrl = url.trim();
 
-  // 1. Check in-memory cache
+  // 1. Check in-memory cache for active session
   if (previewCache.has(normalizedUrl)) {
     return previewCache.get(normalizedUrl)!;
   }
 
-  // 2. Check localStorage cache
-  const stored = getStoredPreview(normalizedUrl);
-  if (stored) {
-    previewCache.set(normalizedUrl, stored);
-    return stored;
-  }
-
   let result: LinkPreviewData | null = null;
 
-  // 3. Provider detection
+  // 2. Provider detection
   if (normalizedUrl.includes('github.com')) {
     result = await resolveGitHub(normalizedUrl);
   } else if (normalizedUrl.includes('youtube.com') || normalizedUrl.includes('youtu.be')) {
@@ -257,14 +221,13 @@ export async function fetchLinkPreview(url: string): Promise<LinkPreviewData> {
     result = await resolveNPM(normalizedUrl);
   }
 
-  // 4. Default to OpenGraph
+  // 3. Default to OpenGraph
   if (!result) {
     result = await resolveOpenGraph(normalizedUrl);
   }
 
-  // Save to caches
+  // Save to active in-memory cache
   previewCache.set(normalizedUrl, result);
-  setStoredPreview(normalizedUrl, result);
 
   return result;
 }

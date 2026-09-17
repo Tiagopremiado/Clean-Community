@@ -32,20 +32,8 @@ const SettingsContext = createContext<SettingsContextType>({
   resolvedTheme: 'light',
 });
 
-const SETTINGS_STORAGE_KEY = 'clean_app_settings_v1';
-
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
-  const [settings, setSettings] = useState<AppSettings>(() => {
-    try {
-      const saved = localStorage.getItem(SETTINGS_STORAGE_KEY);
-      if (saved) {
-        return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
-      }
-    } catch (e) {
-      console.warn('Could not read settings from localStorage:', e);
-    }
-    return DEFAULT_SETTINGS;
-  });
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
   const [systemTheme, setSystemTheme] = useState<'light' | 'dark'>(() => {
     if (typeof window !== 'undefined' && window.matchMedia) {
@@ -67,12 +55,6 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const resolvedTheme = settings.theme === 'system' ? systemTheme : settings.theme;
 
   useEffect(() => {
-    try {
-      localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
-    } catch (e) {
-      console.warn('Failed to persist settings:', e);
-    }
-
     // Apply or remove dark class on root element
     const root = document.documentElement;
     if (resolvedTheme === 'dark') {
@@ -80,7 +62,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     } else {
       root.classList.remove('dark');
     }
-  }, [settings, resolvedTheme]);
+  }, [resolvedTheme]);
 
   const updateSetting = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     setSettings((prev) => ({
@@ -91,11 +73,6 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
 
   const resetSettings = () => {
     setSettings(DEFAULT_SETTINGS);
-    try {
-      localStorage.removeItem(SETTINGS_STORAGE_KEY);
-    } catch (e) {
-      console.warn(e);
-    }
   };
 
   return (

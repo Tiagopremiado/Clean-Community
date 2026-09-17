@@ -1,5 +1,5 @@
-import React from 'react';
-import { Link, NavLink } from 'react-router-dom';
+import React, { useState } from 'react';
+import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { 
   Home, 
   Compass, 
@@ -16,6 +16,8 @@ import {
   Globe,
   ExternalLink,
   LogIn,
+  LogOut,
+  Loader2,
   Download,
   ShieldCheck
 } from 'lucide-react';
@@ -29,9 +31,23 @@ function cn(...inputs: (string | undefined | null | false)[]) {
 }
 
 export function Sidebar() {
-  const { user, profile } = useAuth();
+  const navigate = useNavigate();
+  const { user, profile, signOut } = useAuth();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const isStaff = isUserStaff(profile) || isUserStaff(user as any);
   const userMetadata = user?.user_metadata || {};
+
+  const handleSignOut = async () => {
+    try {
+      setIsLoggingOut(true);
+      await signOut();
+      navigate('/', { replace: true });
+    } catch (err) {
+      console.error('Erro ao sair da conta:', err);
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
   
   const displayName = profile?.name || userMetadata.full_name || user?.email?.split('@')[0] || 'Usuário';
   const username = profile?.username || userMetadata.username || user?.email?.split('@')[0] || 'usuario';
@@ -161,16 +177,29 @@ export function Sidebar() {
               <Plus className="w-4 h-4" />
               Publicar
             </Link>
-            <Link 
-              to="/profile" 
-              className="flex items-center gap-3 p-2 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-xl transition-colors"
-            >
-              <img src={avatar} alt={displayName} className="w-8 h-8 rounded-full border border-gray-200 dark:border-zinc-700 object-cover" />
-              <div className="flex flex-col overflow-hidden">
-                <span className="text-sm font-semibold truncate text-gray-900 dark:text-white">{displayName}</span>
-                <span className="text-xs text-gray-500 dark:text-gray-400 truncate">@{username}</span>
-              </div>
-            </Link>
+            <div className="flex items-center justify-between p-1.5 bg-gray-100/90 dark:bg-zinc-900 border border-gray-200/80 dark:border-zinc-800 rounded-xl">
+              <Link 
+                to="/profile" 
+                className="flex items-center gap-2.5 p-1 min-w-0 flex-1 hover:opacity-80 transition-opacity"
+                title="Meu Perfil"
+              >
+                <img src={avatar} alt={displayName} className="w-8 h-8 rounded-full border border-gray-200 dark:border-zinc-700 object-cover shrink-0" />
+                <div className="flex flex-col overflow-hidden text-left">
+                  <span className="text-xs font-bold truncate text-gray-900 dark:text-white">{displayName}</span>
+                  <span className="text-[11px] text-gray-500 dark:text-gray-400 truncate">@{username}</span>
+                </div>
+              </Link>
+              <button
+                type="button"
+                onClick={handleSignOut}
+                disabled={isLoggingOut}
+                className="p-2 text-gray-400 dark:text-zinc-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+                title={isLoggingOut ? "Saindo..." : "Sair da conta"}
+                aria-label="Sair da conta"
+              >
+                {isLoggingOut ? <Loader2 className="w-4 h-4 animate-spin text-red-500" /> : <LogOut className="w-4 h-4" />}
+              </button>
+            </div>
           </>
         ) : (
           <div className="p-3.5 rounded-2xl bg-zinc-100 dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 text-left">

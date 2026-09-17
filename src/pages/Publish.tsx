@@ -1,14 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Category } from '../types';
-import { ArrowLeft, Loader2, AlertCircle, Database, Check, Sparkles } from 'lucide-react';
+import { ArrowLeft, Loader2, AlertCircle, Sparkles } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { MarkdownEditor } from '../components/MarkdownEditor';
 import { RichLinkBookmark } from '../components/RichLinkBookmark';
-import { getPublishDraft, savePublishDraft, clearPublishDraft, useNetworkStatus } from '../lib/offlineFallback';
 
 function cn(...inputs: (string | undefined | null | false)[]) {
   return twMerge(clsx(inputs));
@@ -19,46 +18,14 @@ const categories: Category[] = ['Todos', 'Skills', 'MCPs', 'Workflows', 'Prompts
 export function Publish() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { isOnline } = useNetworkStatus();
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hasDraftRestored, setHasDraftRestored] = useState(false);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [link, setLink] = useState('');
   const [content, setContent] = useState('');
-
-  // 1. Restaura rascunho salvo no localStorage se houver
-  useEffect(() => {
-    const draft = getPublishDraft();
-    if (draft) {
-      if (draft.title) setTitle(draft.title);
-      if (draft.description) setDescription(draft.description);
-      if (draft.content) setContent(draft.content);
-      if (draft.link) setLink(draft.link);
-      if (draft.category && draft.category !== 'Todos') {
-        setSelectedCategory(draft.category as Category);
-      }
-      setHasDraftRestored(true);
-    }
-  }, []);
-
-  // 2. Auto-salva rascunho no localStorage para prevenir perda acidental (contribuindo apenas como rascunho local)
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      savePublishDraft({
-        title,
-        description,
-        content,
-        category: selectedCategory || '',
-        link
-      });
-    }, 500);
-
-    return () => clearTimeout(timeout);
-  }, [title, description, content, selectedCategory, link]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,13 +34,7 @@ export function Publish() {
       return;
     }
     if (!user) {
-      setError('Você precisa estar autenticado para publicar.');
-      return;
-    }
-
-    // OBRIGATÓRIO: O uso de banco de dados é indispensável. LocalStorage não substitui a publicação no banco.
-    if (!isOnline) {
-      setError('O uso do banco de dados Supabase é OBRIGATÓRIO para publicar. O modo offline permite salvar seu rascunho localmente, mas reconecte-se à internet para gravar no banco.');
+      setError('Você precisa estar autenticado no Supabase para publicar.');
       return;
     }
 
@@ -96,8 +57,6 @@ export function Publish() {
 
       if (insertError) throw insertError;
 
-      // Limpa o rascunho local de fallback após persistência confirmada no banco
-      clearPublishDraft();
       navigate(`/post/${data.id}`);
     } catch (err: any) {
       setError(err.message || 'Erro ao gravar publicação no banco de dados Supabase.');
@@ -110,45 +69,15 @@ export function Publish() {
     <div className="max-w-2xl mx-auto w-full pt-8 pb-32 px-4 sm:px-8">
       <button 
         onClick={() => navigate(-1)}
-        className="flex items-center gap-2 text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white  transition-colors mb-8"
+        className="flex items-center gap-2 text-sm font-medium text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white transition-colors mb-8 cursor-pointer"
       >
         <ArrowLeft className="w-4 h-4" />
         Voltar
       </button>
 
       <div className="mb-8">
-        <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900 dark:text-white">Publicar Recurso</h1>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700">
-            <Database className="w-3.5 h-3.5 text-emerald-500" />
-            Gravação no Supabase Obrigatória
-          </span>
-        </div>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900 dark:text-white mb-2">Publicar Recurso</h1>
         <p className="text-gray-500 dark:text-gray-400 text-sm">Compartilhe uma ferramenta, prompt ou workflow com a comunidade.</p>
-        
-        {hasDraftRestored && (
-          <div className="mt-4 p-3 rounded-xl bg-blue-50/80 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 flex items-center justify-between text-xs text-blue-800 dark:text-blue-300">
-            <div className="flex items-center gap-2">
-              <Check className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
-              <span>Rascunho recuperado do armazenamento local (fallback).</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                clearPublishDraft();
-                setTitle('');
-                setDescription('');
-                setContent('');
-                setLink('');
-                setSelectedCategory(null);
-                setHasDraftRestored(false);
-              }}
-              className="text-blue-600 dark:text-blue-400 hover:underline font-semibold ml-2 cursor-pointer"
-            >
-              Descartar rascunho
-            </button>
-          </div>
-        )}
       </div>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-6">

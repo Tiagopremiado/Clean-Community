@@ -57,6 +57,19 @@ export function Profile() {
   const [selectedRole, setSelectedRole] = useState<Role>('member');
   const [isSavingRole, setIsSavingRole] = useState(false);
   const [roleMessage, setRoleMessage] = useState<string | null>(null);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  const handleSignOut = async () => {
+    try {
+      setIsLoggingOut(true);
+      await signOut();
+      navigate('/', { replace: true });
+    } catch (err) {
+      console.error('Erro ao sair da conta:', err);
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
 
   // Check if viewing own profile
   const cleanParam = userIdOrUsername?.toLowerCase().trim().replace(/^@/, '');
@@ -420,11 +433,13 @@ export function Profile() {
                     <Sliders className="w-5 h-5" />
                   </Link>
                   <button 
-                    onClick={signOut}
-                    className="p-2 text-gray-400 dark:text-zinc-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-full transition-colors cursor-pointer" 
-                    title="Sair da conta"
+                    type="button"
+                    onClick={handleSignOut}
+                    disabled={isLoggingOut}
+                    className="p-2 text-gray-400 dark:text-zinc-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-full transition-colors cursor-pointer disabled:opacity-50" 
+                    title={isLoggingOut ? "Saindo da conta..." : "Sair da conta"}
                   >
-                    <LogOut className="w-5 h-5" />
+                    {isLoggingOut ? <Loader2 className="w-5 h-5 animate-spin text-red-500" /> : <LogOut className="w-5 h-5" />}
                   </button>
                 </>
               )}

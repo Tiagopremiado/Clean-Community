@@ -6,48 +6,31 @@ export type Role = 'member' | 'moderator' | 'admin';
 
 export const ADMIN_USERNAMES: string[] = ['thalesdev', 'kalebyalvesgamer'];
 
-// In-memory & localStorage store for instant persistent role updates
-const ROLES_STORAGE_KEY = 'clean_community_roles_override';
+// In-memory runtime store for role updates without localStorage
+const inMemoryRoleOverrides: Record<string, Role> = {};
 
 export function getStoredRoleOverrides(): Record<string, Role> {
-  try {
-    const raw = localStorage.getItem(ROLES_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch (e) {
-    return {};
-  }
+  return inMemoryRoleOverrides;
 }
 
 export function setStoredRoleOverride(idOrUsername: string, role: Role): void {
-  try {
-    const current = getStoredRoleOverrides();
-    const key = idOrUsername.toLowerCase().trim().replace(/^@/, '');
-    current[key] = role;
-    localStorage.setItem(ROLES_STORAGE_KEY, JSON.stringify(current));
-  } catch (e) {
-    console.warn('Failed to save role override:', e);
-  }
+  const key = idOrUsername.toLowerCase().trim().replace(/^@/, '');
+  inMemoryRoleOverrides[key] = role;
 }
 
 export function isAdminUser(username?: string | null): boolean {
   if (!username) return false;
   const clean = username.toLowerCase().trim().replace(/^@/, '');
   if (ADMIN_USERNAMES.includes(clean)) return true;
-  const overrides = getStoredRoleOverrides();
-  return overrides[clean] === 'admin';
+  return inMemoryRoleOverrides[clean] === 'admin';
 }
 
 export function isUserAdminOrDev(userOrProfile?: { role?: string; username?: string | null; email?: string | null; id?: string; user_metadata?: any } | null): boolean {
   if (!userOrProfile) return false;
   if (userOrProfile.role === 'admin') return true;
   if (userOrProfile.user_metadata?.role === 'admin') return true;
-  if (userOrProfile.id) {
-    const overrides = getStoredRoleOverrides();
-    if (overrides[userOrProfile.id] === 'admin') return true;
-  }
-  if (userOrProfile.username) {
-    if (isAdminUser(userOrProfile.username)) return true;
-  }
+  if (userOrProfile.id && inMemoryRoleOverrides[userOrProfile.id] === 'admin') return true;
+  if (userOrProfile.username && isAdminUser(userOrProfile.username)) return true;
   if (userOrProfile.email) {
     const emailPrefix = userOrProfile.email.split('@')[0];
     if (isAdminUser(emailPrefix) || userOrProfile.email.toLowerCase().includes('kalebyalvesgamer')) return true;
@@ -59,14 +42,10 @@ export function isUserModerator(userOrProfile?: { role?: string; username?: stri
   if (!userOrProfile) return false;
   if (userOrProfile.role === 'moderator') return true;
   if (userOrProfile.user_metadata?.role === 'moderator') return true;
-  if (userOrProfile.id) {
-    const overrides = getStoredRoleOverrides();
-    if (overrides[userOrProfile.id] === 'moderator') return true;
-  }
+  if (userOrProfile.id && inMemoryRoleOverrides[userOrProfile.id] === 'moderator') return true;
   if (userOrProfile.username) {
     const clean = userOrProfile.username.toLowerCase().trim().replace(/^@/, '');
-    const overrides = getStoredRoleOverrides();
-    if (overrides[clean] === 'moderator') return true;
+    if (inMemoryRoleOverrides[clean] === 'moderator') return true;
   }
   return false;
 }
@@ -75,41 +54,32 @@ export function isUserStaff(userOrProfile?: { role?: string; username?: string |
   return isUserAdminOrDev(userOrProfile) || isUserModerator(userOrProfile);
 }
 
-// Store for banned/suspended members
-const BANNED_USERS_KEY = 'clean_community_banned_users';
+// In-memory store for banned/suspended members (zero localStorage)
+const inMemoryBannedUsers: Set<string> = new Set();
 
 export function getBannedUsers(): string[] {
-  try {
-    const raw = localStorage.getItem(BANNED_USERS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  return Array.from(inMemoryBannedUsers);
 }
 
 export function toggleUserBan(userIdOrUsername: string): boolean {
-  try {
-    const list = getBannedUsers();
-    const key = userIdOrUsername.toLowerCase().trim().replace(/^@/, '');
-    const exists = list.includes(key);
-    const updated = exists ? list.filter(id => id !== key) : [...list, key];
-    localStorage.setItem(BANNED_USERS_KEY, JSON.stringify(updated));
-    return !exists;
-  } catch {
+  const key = userIdOrUsername.toLowerCase().trim().replace(/^@/, '');
+  if (inMemoryBannedUsers.has(key)) {
+    inMemoryBannedUsers.delete(key);
     return false;
+  } else {
+    inMemoryBannedUsers.add(key);
+    return true;
   }
 }
 
 export function isUserBanned(userIdOrUsername?: string | null): boolean {
   if (!userIdOrUsername) return false;
-  const list = getBannedUsers();
   const key = userIdOrUsername.toLowerCase().trim().replace(/^@/, '');
-  return list.includes(key);
+  return inMemoryBannedUsers.has(key);
 }
 
-// Store for the single pinned / highlighted post by moderators/admins
-const PINNED_POST_KEY = 'clean_community_pinned_single_post';
-const LEGACY_PINNED_POSTS_KEY = 'clean_community_pinned_posts';
+// In-memory store for the pinned post (zero localStorage)
+let inMemoryPinnedPostId: string | null = null;
 
 export const OFFICIAL_SITE_URL = 'https://clean-community-three.vercel.app';
 
@@ -119,50 +89,26 @@ export function getOfficialShareUrl(path: string = ''): string {
 }
 
 export function getPinnedPostId(): string | null {
-  try {
-    const single = localStorage.getItem(PINNED_POST_KEY);
-    if (single) return single;
-    // Migrate legacy array if exists
-    const legacy = localStorage.getItem(LEGACY_PINNED_POSTS_KEY);
-    if (legacy) {
-      const list = JSON.parse(legacy);
-      if (Array.isArray(list) && list.length > 0) {
-        localStorage.setItem(PINNED_POST_KEY, list[0]);
-        return list[0];
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
+  return inMemoryPinnedPostId;
 }
 
 export function getPinnedPosts(): string[] {
-  const current = getPinnedPostId();
-  return current ? [current] : [];
+  return inMemoryPinnedPostId ? [inMemoryPinnedPostId] : [];
 }
 
 export function isPinnedPost(postId: string): boolean {
-  return getPinnedPostId() === postId;
+  return inMemoryPinnedPostId === postId;
 }
 
 export const isPostPinned = isPinnedPost;
 
 export function pinPost(postId: string): void {
-  try {
-    localStorage.setItem(PINNED_POST_KEY, postId);
-  } catch (e) {
-    console.error(e);
-  }
+  inMemoryPinnedPostId = postId;
 }
 
 export function unpinPost(postId?: string): void {
-  try {
-    if (!postId || getPinnedPostId() === postId) {
-      localStorage.removeItem(PINNED_POST_KEY);
-    }
-  } catch (e) {
-    console.error(e);
+  if (!postId || inMemoryPinnedPostId === postId) {
+    inMemoryPinnedPostId = null;
   }
 }
 
@@ -172,26 +118,19 @@ export function togglePinPost(postId: string, forceReplace: boolean = false): {
   replacedId: string | null;
   requiresConfirmation: boolean;
 } {
-  try {
-    const currentPinned = getPinnedPostId();
-    
-    // Case 1: Post is already pinned -> unpin it
-    if (currentPinned === postId) {
-      unpinPost(postId);
-      return { success: true, isPinned: false, replacedId: null, requiresConfirmation: false };
-    }
-
-    // Case 2: Another post is already pinned and confirmation has not been provided
-    if (currentPinned && !forceReplace) {
-      return { success: false, isPinned: false, replacedId: currentPinned, requiresConfirmation: true };
-    }
-
-    // Case 3: Pin this post (replacing any previous pinned post)
-    pinPost(postId);
-    return { success: true, isPinned: true, replacedId: currentPinned, requiresConfirmation: false };
-  } catch {
-    return { success: false, isPinned: false, replacedId: null, requiresConfirmation: false };
+  const currentPinned = inMemoryPinnedPostId;
+  
+  if (currentPinned === postId) {
+    unpinPost(postId);
+    return { success: true, isPinned: false, replacedId: null, requiresConfirmation: false };
   }
+
+  if (currentPinned && !forceReplace) {
+    return { success: false, isPinned: false, replacedId: currentPinned, requiresConfirmation: true };
+  }
+
+  pinPost(postId);
+  return { success: true, isPinned: true, replacedId: currentPinned, requiresConfirmation: false };
 }
 
 export function normalizeProfile(profile: any): UserProfile | null {

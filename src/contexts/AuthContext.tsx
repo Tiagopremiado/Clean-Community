@@ -132,11 +132,34 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const signOut = async () => {
     try {
-      await supabase.auth.signOut();
+      // Timeout to ensure signOut never hangs if offline or network latency spikes
+      const signOutPromise = supabase.auth.signOut({ scope: 'local' });
+      const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 1500));
+      await Promise.race([signOutPromise, timeoutPromise]);
+    } catch (err) {
+      console.warn('Erro durante supabase signOut:', err);
     } finally {
+      // Forcefully clear any auth session tokens from storage
+      try {
+        if (typeof window !== 'undefined') {
+          const keysToRemove: string[] = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && (k.startsWith('sb-') || k.includes('supabase') || k.startsWith('clean_'))) {
+              keysToRemove.push(k);
+            }
+          }
+          keysToRemove.forEach((k) => localStorage.removeItem(k));
+          sessionStorage.clear();
+        }
+      } catch (e) {
+        console.warn('Erro ao limpar storage de sessão:', e);
+      }
+
       setSession(null);
       setUser(null);
       setProfile(null);
+      setLoading(false);
     }
   };
 
