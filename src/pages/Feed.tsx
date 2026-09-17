@@ -1,12 +1,109 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { PostCard } from '../components/PostCard';
 import { Search, Loader2, Sparkles, ArrowRight, RefreshCw, AlertCircle } from 'lucide-react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { supabase, supabaseUrl, supabaseAnonKey } from '../lib/supabase';
 import { Post, normalizeProfile, getPinnedPostId } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { useSettings } from '../contexts/SettingsContext';
 import { FeedFilterBar, FeedSortOption } from '../components/FeedFilterBar';
+
+const CATEGORY_MAP: Record<string, string> = {
+  'skills': 'Skills',
+  'mcps': 'MCPs',
+  'workflows': 'Workflows',
+  'prompts': 'Prompts',
+  'ferramentas': 'Ferramentas',
+  'referências': 'Referências',
+  'referencias': 'Referências'
+};
+
+async function fetchPostsResiliently(
+  feedSort: FeedSortOption,
+  categoryFilter: string | null
+): Promise<any[]> {
+  const mappedCategory = categoryFilter && categoryFilter.toLowerCase() !== 'todos'
+    ? (CATEGORY_MAP[categoryFilter.toLowerCase()] || categoryFilter)
+    : null;
+
+  // 1. Direct REST fetcher: ultra-fast (~500ms), unaffected by Supabase JS client auth lock stalls
+  const fetchViaRest = async () => {
+    let url = `${supabaseUrl}/rest/v1/posts?select=*,profiles(*),comments(count),likes_count:likes(count)&limit=50`;
+    if (feedSort === 'popular') {
+      url += `&order=likes.desc`;
+    } else {
+      url += `&order=created_at.desc`;
+    }
+    if (mappedCategory) {
+      url += `&category=eq.${encodeURIComponent(mappedCategory)}`;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          apikey: supabaseAnonKey,
+          Authorization: `Bearer ${supabaseAnonKey}`,
+          Accept: 'application/json'
+        }
+      });
+      clearTimeout(timer);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      return await response.json();
+    } catch (err) {
+      clearTimeout(timer);
+      throw err;
+    }
+  };
+
+  // 2. Client query via supabase-js
+  const fetchViaClient = async () => {
+    let query = supabase
+      .from('posts')
+      .select('*, profiles(*), comments(count), likes_count:likes(count)')
+      .limit(50);
+
+    if (feedSort === 'popular') {
+      query = query.order('likes', { ascending: false });
+    } else {
+      query = query.order('created_at', { ascending: false });
+    }
+
+    if (mappedCategory) {
+      query = query.eq('category', mappedCategory);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data;
+  };
+
+  try {
+    // Race client query with a 3.5s threshold before launching REST fallback
+    const clientPromise = fetchViaClient();
+    const fallbackTimerPromise = new Promise<any[]>((resolve, reject) => {
+      setTimeout(async () => {
+        try {
+          const restData = await fetchViaRest();
+          resolve(restData);
+        } catch (restErr) {
+          reject(restErr);
+        }
+      }, 3500);
+    });
+
+    return await Promise.race([clientPromise, fallbackTimerPromise]);
+  } catch (clientErr) {
+    console.warn('Tentativa primária falhou, usando API REST direta:', clientErr);
+    return await fetchViaRest();
+  }
+}
 
 export function Feed() {
   const navigate = useNavigate();
@@ -29,6 +126,9 @@ export function Feed() {
     }
     return [];
   });
+  const postsRef = useRef<Post[]>(posts);
+  postsRef.current = posts;
+
   const [likedPostIds, setLikedPostIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(() => {
     try {
@@ -52,51 +152,14 @@ export function Feed() {
   };
   
   const loadFeed = useCallback(async (isRetry = false) => {
-    // If we have cached posts, do a silent background refresh without wiping existing posts
-    if (!posts.length || isRetry) {
+    if (!postsRef.current.length || isRetry) {
       setLoading(true);
     }
     setError('');
 
     try {
-      // Consulta direta ao banco de dados Supabase
-      let query = supabase
-        .from('posts')
-        .select('*, profiles(*), comments(count), likes_count:likes(count)');
+      const postsData = await fetchPostsResiliently(feedSort, categoryFilter);
 
-      // Ordenação dinâmica: mais recentes ou mais populares
-      if (feedSort === 'popular') {
-        query = query.order('likes', { ascending: false });
-      } else {
-        query = query.order('created_at', { ascending: false });
-      }
-
-      query = query.limit(50);
-        
-      if (categoryFilter && categoryFilter !== 'todos') {
-        const categoriesObj: Record<string, string> = {
-          'skills': 'Skills',
-          'mcps': 'MCPs',
-          'workflows': 'Workflows',
-          'prompts': 'Prompts',
-          'ferramentas': 'Ferramentas',
-          'referências': 'Referências'
-        };
-        const mapped = categoriesObj[categoryFilter.toLowerCase()];
-        if (mapped) {
-          query = query.eq('category', mapped);
-        }
-      }
-
-      // Safe query without aggressive 8s cutoff (with generous 20s network race guard)
-      const queryPromise = query;
-      const timeoutPromise = new Promise<{ data: null; error: any }>((_, reject) =>
-        setTimeout(() => reject(new Error('A conexão com o Supabase demorou mais que o esperado. Clique em Tentar Novamente.')), 20000)
-      );
-
-      const { data: postsData, error: postsError } = (await Promise.race([queryPromise, timeoutPromise])) as any;
-      if (postsError) throw postsError;
-      
       const formattedPosts = ((postsData as any[]) || []).map(p => {
         const rawLikesCount = p.likes_count?.[0]?.count ?? (Array.isArray(p.likes) ? (p.likes[0]?.count ?? 0) : (typeof p.likes === 'number' ? p.likes : 0));
         return {
@@ -135,15 +198,26 @@ export function Feed() {
         }
       }
     } catch (err: any) {
-      console.error('Erro na consulta Supabase:', err);
-      // If we have cached posts, keep showing them and don't block the screen
-      if (!posts.length) {
-        setError(err?.message || 'Não foi possível carregar os posts do Supabase.');
+      console.error('Erro ao carregar feed:', err);
+      // If we have cached posts, keep showing them
+      if (!postsRef.current.length) {
+        // Check if there is cache available
+        try {
+          const cached = localStorage.getItem('clean_community_feed_cache');
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setPosts(parsed);
+              return;
+            }
+          }
+        } catch {}
+        setError('Não foi possível conectar ao banco de dados. Verifique sua conexão e tente novamente.');
       }
     } finally {
       setLoading(false);
     }
-  }, [categoryFilter, user, feedSort, posts.length]);
+  }, [categoryFilter, user, feedSort]);
 
   useEffect(() => {
     loadFeed();

@@ -9,11 +9,10 @@ const DEPRECATED_KEYS = [
   'clean_community_banned_users',
   'clean_community_pinned_single_post',
   'clean_community_pinned_posts',
-  'clean_app_settings_v1',
   'clean_community_notifications_v1'
 ];
 
-// Purga ativa de qualquer resquício de localStorage em tempo de execução
+// Purga ativa apenas das chaves obsoletas em tempo de execução
 export function purgeAllLegacyLocalStorage(): void {
   try {
     if (typeof window === 'undefined' || !window.localStorage) return;
@@ -21,24 +20,6 @@ export function purgeAllLegacyLocalStorage(): void {
     DEPRECATED_KEYS.forEach(key => {
       localStorage.removeItem(key);
     });
-
-    // Remove qualquer chave com prefixo antigo
-    const keysToRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && (
-        key.startsWith('clean_') || 
-        key.startsWith('lp_cache_') || 
-        key.startsWith('clean_offline_') || 
-        key.startsWith('clean_preview_cache_')
-      )) {
-        // Preserva apenas chaves do próprio supabase auth (ex: sb-*-auth-token)
-        if (!key.startsWith('sb-')) {
-          keysToRemove.push(key);
-        }
-      }
-    }
-    keysToRemove.forEach(k => localStorage.removeItem(k));
   } catch (e) {
     // Silencioso se bloqueado por sandbox
   }
