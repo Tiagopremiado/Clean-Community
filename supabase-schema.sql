@@ -134,3 +134,25 @@ CREATE POLICY "Users can delete their own likes" ON public.likes FOR DELETE USIN
 -- Create simple text search index on posts for Explore
 CREATE INDEX idx_posts_search ON public.posts USING GIN (to_tsvector('portuguese', title || ' ' || description || ' ' || coalesce(content, '')));
 
+-- Function to allow login by username: securely resolves email from auth.users via public.profiles
+CREATE OR REPLACE FUNCTION public.get_email_by_username(username_input text)
+RETURNS text AS $$
+DECLARE
+  found_email text;
+  cleaned text;
+BEGIN
+  cleaned := LOWER(REGEXP_REPLACE(username_input, '^@', ''));
+  
+  SELECT u.email INTO found_email
+  FROM auth.users u
+  JOIN public.profiles p ON p.id = u.id
+  WHERE LOWER(p.username) = cleaned
+  LIMIT 1;
+  
+  RETURN found_email;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION public.get_email_by_username(text) TO anon, authenticated;
+
+

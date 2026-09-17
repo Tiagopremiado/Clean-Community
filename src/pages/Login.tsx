@@ -12,10 +12,14 @@ import {
   Eye,
   EyeOff,
   CheckCircle2,
-  HelpCircle
+  HelpCircle,
+  User,
+  AtSign,
+  UserCheck
 } from 'lucide-react';
 import { useNavigate, Navigate, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { resolveIdentifierToEmails, saveUserIdentifierMapping } from '../lib/userAuthLookup';
 
 export function Login() {
   const navigate = useNavigate();
@@ -24,16 +28,24 @@ export function Login() {
   const { user, loading: authLoading } = useAuth();
   
   const [isSignUp, setIsSignUp] = useState(mode === 'signup');
-  const [email, setEmail] = useState('');
+  const [loginMethod, setLoginMethod] = useState<'username' | 'email'>('username');
+  
+  // Form fields
+  const [identifier, setIdentifier] = useState(''); // username or email in login
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
+  // Sign up specific fields
+  const [signUpFullName, setSignUpFullName] = useState('');
+  const [signUpUsername, setSignUpUsername] = useState('');
+  const [signUpEmail, setSignUpEmail] = useState('');
+
   // Password reset flow
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false);
-  const [resetEmail, setResetEmail] = useState('');
+  const [resetInput, setResetInput] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
   const [resetSuccess, setResetSuccess] = useState<string | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
@@ -48,14 +60,10 @@ export function Login() {
     return <Navigate to="/" replace />;
   }
 
-  // Check if input looks like a username instead of email
-  const trimmedEmail = email.trim();
-  const looksLikeUsername = trimmedEmail.length > 2 && (!trimmedEmail.includes('@') || trimmedEmail.startsWith('@'));
-
   const translateAuthError = (message: string) => {
     const lower = message.toLowerCase();
     if (lower.includes('invalid login credentials') || lower.includes('invalid_grant')) {
-      return 'E-mail ou senha incorretos. Lembre-se: use o e-mail cadastrado na conta (a alteração do seu nome de usuário não altera seu e-mail de login).';
+      return 'Credenciais incorretas. Verifique a senha digitada ou seu usuário/e-mail.';
     }
     if (lower.includes('email not confirmed')) {
       return 'Seu e-mail ainda não foi confirmado. Verifique sua caixa de entrada e spam.';
@@ -67,7 +75,7 @@ export function Login() {
       return 'A senha precisa ter pelo menos 6 caracteres.';
     }
     if (lower.includes('rate limit')) {
-      return 'Muitas tentativas em pouco tempo. Aguarde alguns segundos e tente novamente.';
+      return 'Muitas tentativas em pouco tempo. Aguarde alguns instantes e tente novamente.';
     }
     return message || 'Ocorreu um erro ao autenticar. Tente novamente.';
   };
@@ -78,39 +86,124 @@ export function Login() {
     setError(null);
     setInfoMessage(null);
 
-    const cleanEmail = email.trim().toLowerCase();
-    const cleanPassword = password;
-
-    if (!cleanEmail.includes('@')) {
-      setError('Por favor, informe um endereço de e-mail válido (ex: seu@email.com). O login é realizado pelo seu e-mail, e não pelo @username.');
-      setLoading(false);
-      return;
-    }
-
     try {
       if (isSignUp) {
+        // --- CADASTRO ---
+        const cleanEmail = signUpEmail.trim().toLowerCase();
+        const rawUsername = signUpUsername.trim().replace(/^@/, '');
+        const cleanUsername = rawUsername.toLowerCase() || cleanEmail.split('@')[0];
+        const cleanFullName = signUpFullName.trim() || cleanUsername;
+        const cleanPassword = password;
+
+        if (!cleanEmail.includes('@') || !cleanEmail.includes('.')) {
+          setError('Por favor, informe um endereço de e-mail válido.');
+          setLoading(false);
+          return;
+        }
+
+        if (cleanUsername.length < 3) {
+          setError('O nome de usuário precisa ter pelo menos 3 caracteres.');
+          setLoading(false);
+          return;
+        }
+
         const { error: signUpError, data } = await supabase.auth.signUp({
           email: cleanEmail,
           password: cleanPassword,
+          options: {
+            data: {
+              username: cleanUsername,
+              full_name: cleanFullName,
+            }
+          }
         });
 
         if (signUpError) throw signUpError;
 
+        // Remember username -> email mapping
+        saveUserIdentifierMapping(cleanUsername, cleanEmail);
+
         if (data.session) {
           navigate('/');
         } else {
-          setInfoMessage('Conta criada com sucesso! Se necessário, confirme seu e-mail para ativar o acesso.');
+          setInfoMessage('Conta criada com sucesso! Você já pode entrar com seu e-mail ou @' + cleanUsername + '.');
           setIsSignUp(false);
+          setIdentifier(cleanUsername);
+          setLoginMethod('username');
           setPassword('');
         }
       } else {
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email: cleanEmail,
-          password: cleanPassword,
-        });
+        // --- LOGIN COM USERNAME OU E-MAIL ---
+        const rawInput = identifier.trim();
+        if (!rawInput) {
+          setError(loginMethod === 'username' ? 'Digite seu nome de usuário.' : 'Digite seu e-mail.');
+          setLoading(false);
+          return;
+        }
 
-        if (signInError) throw signInError;
-        navigate('/');
+        // Resolves identifier (username or email) into email candidates
+        const { isEmail, emailCandidates, username, foundProfile } = await resolveIdentifierToEmails(rawInput);
+
+        if (isEmail) {
+          // Login direto por e-mail
+          const targetEmail = emailCandidates[0];
+          const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+            email: targetEmail,
+            password: password,
+          });
+
+          if (signInError) throw signInError;
+
+          // Se tiver username nos metadados ou perfil, salva o mapeamento
+          if (signInData?.user) {
+            const resolvedUsername = (signInData.user.user_metadata?.username as string) || signInData.user.email?.split('@')[0];
+            if (resolvedUsername && signInData.user.email) {
+              saveUserIdentifierMapping(resolvedUsername, signInData.user.email);
+            }
+          }
+
+          navigate('/');
+        } else {
+          // Login por NOME DE USUÁRIO
+          if (emailCandidates.length > 0) {
+            let signedIn = false;
+            let lastError: any = null;
+
+            for (const candEmail of emailCandidates) {
+              const { data: signInData, error: candError } = await supabase.auth.signInWithPassword({
+                email: candEmail,
+                password: password,
+              });
+
+              if (!candError && signInData.session) {
+                signedIn = true;
+                if (username) {
+                  saveUserIdentifierMapping(username, candEmail);
+                }
+                navigate('/');
+                return;
+              } else {
+                lastError = candError;
+              }
+            }
+
+            if (!signedIn) {
+              if (lastError) throw lastError;
+              throw new Error('Senha incorreta para o usuário @' + (username || rawInput) + '.');
+            }
+          } else {
+            // Nenhum e-mail mapeado ainda para esse username
+            if (foundProfile) {
+              setError(
+                `Encontramos o usuário @${foundProfile.username}! Como é seu primeiro acesso por nome de usuário neste navegador, faça login uma vez com seu e-mail cadastrado para ativar a entrada direta por @username.`
+              );
+            } else {
+              setError(
+                `Nome de usuário "@${rawInput.replace(/^@/, '')}" não encontrado. Verifique a digitação ou entre usando seu e-mail.`
+              );
+            }
+          }
+        }
       }
     } catch (err: any) {
       setError(translateAuthError(err?.message || ''));
@@ -125,14 +218,23 @@ export function Login() {
     setResetError(null);
     setResetSuccess(null);
 
-    const targetEmail = (resetEmail || email).trim().toLowerCase();
-    if (!targetEmail || !targetEmail.includes('@')) {
-      setResetError('Por favor, informe um endereço de e-mail válido.');
+    const rawTarget = (resetInput || identifier || signUpEmail).trim();
+    if (!rawTarget) {
+      setResetError('Por favor, informe seu e-mail ou nome de usuário.');
       setResetLoading(false);
       return;
     }
 
     try {
+      const { emailCandidates, isEmail } = await resolveIdentifierToEmails(rawTarget);
+      const targetEmail = isEmail ? rawTarget.toLowerCase() : (emailCandidates[0] || null);
+
+      if (!targetEmail) {
+        setResetError('Não foi possível identificar o e-mail correspondente. Por favor, digite seu endereço de e-mail completo.');
+        setResetLoading(false);
+        return;
+      }
+
       const { error } = await supabase.auth.resetPasswordForEmail(targetEmail, {
         redirectTo: window.location.origin + '/login',
       });
@@ -167,8 +269,8 @@ export function Login() {
           </h1>
           <p className="text-gray-500 dark:text-gray-400 text-sm">
             {isSignUp 
-              ? 'Junte-se à CLEAN Community e colabore.' 
-              : 'Entre com seu e-mail para acessar sua conta.'}
+              ? 'Defina seu @username e participe da comunidade.' 
+              : 'Entre com seu nome de usuário ou e-mail.'}
           </p>
         </div>
 
@@ -218,16 +320,16 @@ export function Login() {
               ) : (
                 <>
                   <p className="text-xs text-gray-500 dark:text-zinc-400 leading-relaxed">
-                    Informe seu e-mail cadastrado. Enviaremos um link seguro para você redefinir sua senha.
+                    Informe seu nome de usuário ou e-mail cadastrado. Enviaremos um link seguro para redefinir sua senha.
                   </p>
                   <div className="relative">
                     <Mail className="w-4 h-4 text-gray-400 dark:text-gray-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
-                      type="email"
+                      type="text"
                       required
-                      value={resetEmail || email}
-                      onChange={(e) => setResetEmail(e.target.value)}
-                      placeholder="seu@email.com"
+                      value={resetInput}
+                      onChange={(e) => setResetInput(e.target.value)}
+                      placeholder="seu @username ou seu@email.com"
                       className="w-full pl-10 pr-4 py-2.5 bg-gray-50 dark:bg-zinc-900/50 border border-gray-200 dark:border-zinc-800 rounded-xl text-sm focus:bg-white dark:focus:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-black/5 focus:border-gray-900 dark:focus:border-white transition-all text-gray-900 dark:text-white"
                     />
                   </div>
@@ -244,38 +346,133 @@ export function Login() {
             </form>
           ) : (
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              {/* Campo E-mail */}
-              <div className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between">
-                  <label htmlFor="email" className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wider">
-                    E-mail da Conta
-                  </label>
-                  <span className="text-[10px] text-gray-400 dark:text-zinc-500">Acesso principal</span>
-                </div>
-                <div className="relative">
-                  <Mail className="w-4 h-4 text-gray-400 dark:text-gray-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    id="email"
-                    type="email"
-                    required
-                    autoComplete="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="seu@email.com"
-                    className="w-full pl-10 pr-4 py-2.5 bg-gray-50 dark:bg-zinc-800/40 border border-gray-200 dark:border-zinc-800 rounded-xl text-sm focus:bg-white dark:focus:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-black/5 focus:border-gray-900 dark:focus:border-white transition-all text-gray-900 dark:text-white"
-                  />
-                </div>
-
-                {/* Dica amigável se digitar username */}
-                {looksLikeUsername && (
-                  <div className="flex items-start gap-1.5 text-[11px] text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 p-2 rounded-lg border border-amber-200/50 dark:border-amber-900/40 mt-1">
-                    <HelpCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                    <span>
-                      Dica: O login é feito com o seu <strong>e-mail completo</strong> (ex: seu@email.com), mesmo que você já tenha alterado o seu @username no perfil.
-                    </span>
+              {/* Se for MODO LOGIN: Alternador visual entre Nome de Usuário e E-mail */}
+              {!isSignUp ? (
+                <div className="flex flex-col gap-3">
+                  <div className="grid grid-cols-2 p-1 rounded-xl bg-gray-100 dark:bg-zinc-800/80 border border-gray-200/80 dark:border-zinc-700/60">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLoginMethod('username');
+                        setError(null);
+                      }}
+                      className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        loginMethod === 'username'
+                          ? 'bg-white dark:bg-zinc-900 text-black dark:text-white shadow-xs'
+                          : 'text-gray-500 dark:text-zinc-400 hover:text-black dark:hover:text-white'
+                      }`}
+                    >
+                      <AtSign className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                      <span>Nome de Usuário</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLoginMethod('email');
+                        setError(null);
+                      }}
+                      className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        loginMethod === 'email'
+                          ? 'bg-white dark:bg-zinc-900 text-black dark:text-white shadow-xs'
+                          : 'text-gray-500 dark:text-zinc-400 hover:text-black dark:hover:text-white'
+                      }`}
+                    >
+                      <Mail className="w-3.5 h-3.5" />
+                      <span>E-mail</span>
+                    </button>
                   </div>
-                )}
-              </div>
+
+                  {/* Campo de Identificador (Username ou E-mail) */}
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between">
+                      <label htmlFor="identifier" className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wider">
+                        {loginMethod === 'username' ? 'Nome de Usuário' : 'E-mail da Conta'}
+                      </label>
+                      <span className="text-[10px] text-gray-400 dark:text-zinc-500 font-medium">
+                        {loginMethod === 'username' ? 'ex: thalesdev' : 'seu@email.com'}
+                      </span>
+                    </div>
+                    <div className="relative">
+                      {loginMethod === 'username' ? (
+                        <AtSign className="w-4 h-4 text-purple-600 dark:text-purple-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      ) : (
+                        <Mail className="w-4 h-4 text-gray-400 dark:text-gray-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      )}
+                      <input
+                        id="identifier"
+                        type={loginMethod === 'username' ? 'text' : 'email'}
+                        required
+                        autoComplete={loginMethod === 'username' ? 'username' : 'email'}
+                        value={identifier}
+                        onChange={(e) => setIdentifier(e.target.value)}
+                        placeholder={loginMethod === 'username' ? 'thalesdev ou @thalesdev' : 'seu@email.com'}
+                        className="w-full pl-10 pr-4 py-2.5 bg-gray-50 dark:bg-zinc-800/40 border border-gray-200 dark:border-zinc-800 rounded-xl text-sm focus:bg-white dark:focus:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-black/5 focus:border-gray-900 dark:focus:border-white transition-all text-gray-900 dark:text-white"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* Se for MODO SIGN UP: Nome, Username e E-mail */
+                <div className="flex flex-col gap-3.5">
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="signup-name" className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wider">
+                      Nome ou Apelido
+                    </label>
+                    <div className="relative">
+                      <User className="w-4 h-4 text-gray-400 dark:text-gray-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        id="signup-name"
+                        type="text"
+                        required
+                        value={signUpFullName}
+                        onChange={(e) => setSignUpFullName(e.target.value)}
+                        placeholder="Thales Alves"
+                        className="w-full pl-10 pr-4 py-2.5 bg-gray-50 dark:bg-zinc-800/40 border border-gray-200 dark:border-zinc-800 rounded-xl text-sm focus:bg-white dark:focus:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-black/5 focus:border-gray-900 dark:focus:border-white transition-all text-gray-900 dark:text-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between">
+                      <label htmlFor="signup-username" className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wider">
+                        Nome de Usuário (@username)
+                      </label>
+                      <span className="text-[10px] text-purple-600 dark:text-purple-400 font-bold">Único na rede</span>
+                    </div>
+                    <div className="relative">
+                      <AtSign className="w-4 h-4 text-purple-600 dark:text-purple-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        id="signup-username"
+                        type="text"
+                        required
+                        value={signUpUsername}
+                        onChange={(e) => setSignUpUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, ''))}
+                        placeholder="thalesdev"
+                        className="w-full pl-10 pr-4 py-2.5 bg-gray-50 dark:bg-zinc-800/40 border border-gray-200 dark:border-zinc-800 rounded-xl text-sm focus:bg-white dark:focus:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-black/5 focus:border-gray-900 dark:focus:border-white transition-all text-gray-900 dark:text-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="signup-email" className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wider">
+                      E-mail
+                    </label>
+                    <div className="relative">
+                      <Mail className="w-4 h-4 text-gray-400 dark:text-gray-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        id="signup-email"
+                        type="email"
+                        required
+                        autoComplete="email"
+                        value={signUpEmail}
+                        onChange={(e) => setSignUpEmail(e.target.value)}
+                        placeholder="seu@email.com"
+                        className="w-full pl-10 pr-4 py-2.5 bg-gray-50 dark:bg-zinc-800/40 border border-gray-200 dark:border-zinc-800 rounded-xl text-sm focus:bg-white dark:focus:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-black/5 focus:border-gray-900 dark:focus:border-white transition-all text-gray-900 dark:text-white"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Campo Senha */}
               <div className="flex flex-col gap-1.5">
@@ -317,9 +514,16 @@ export function Login() {
                 </div>
               </div>
 
-              {/* Nota explicativa permanente sobre login por email */}
-              <div className="p-2.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200/60 dark:border-zinc-800 text-[11px] text-gray-500 dark:text-zinc-400 leading-relaxed">
-                ℹ️ <strong>Atenção:</strong> O login é sempre realizado com o seu <strong>e-mail cadastrado</strong>. Caso tenha trocado seu nome de usuário (@username), continue usando seu e-mail normalmente para entrar.
+              {/* Badge informativa elegante */}
+              <div className="p-2.5 rounded-xl bg-purple-50/60 dark:bg-purple-950/20 border border-purple-100 dark:border-purple-900/30 flex items-center gap-2 text-[11px] text-purple-900 dark:text-purple-300">
+                <UserCheck className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
+                <span>
+                  {isSignUp 
+                    ? 'Seu nome de usuário poderá ser usado para entrar em qualquer dispositivo.'
+                    : loginMethod === 'username' 
+                      ? 'Você pode entrar diretamente com seu @username e sua senha cadastrada.'
+                      : 'Você pode alternar para entrar com seu @username a qualquer momento.'}
+                </span>
               </div>
 
               <button
@@ -328,7 +532,7 @@ export function Login() {
                 className="w-full bg-black dark:bg-white text-white dark:text-black py-3 rounded-xl text-sm font-bold mt-1 hover:bg-gray-800 dark:hover:bg-gray-200 transition-colors disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer shadow-xs"
               >
                 {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-                {isSignUp ? 'Criar conta' : 'Entrar na Conta'}
+                {isSignUp ? 'Criar conta com @username' : 'Entrar na Conta'}
               </button>
             </form>
           )}
