@@ -1,0 +1,8 @@
+{
+  "name": "CLEAN Community",
+  "description": "Um acervo vivo de recursos, ferramentas e prompts para criadores de IA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

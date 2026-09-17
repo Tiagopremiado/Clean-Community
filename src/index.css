@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  background-color: #FAFAFA;
+  color: #171717;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Subtle dot pattern for 3D dot silhouettes mentioned in prompt */
+.bg-dot-pattern {
+  background-image: radial-gradient(circle at center, #D4D4D8 1px, transparent 1px);
+  background-size: 24px 24px;
+}
